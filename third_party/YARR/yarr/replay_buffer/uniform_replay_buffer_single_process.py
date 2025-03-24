@@ -229,7 +229,11 @@ class UniformReplayBufferSingleProcess(ReplayBuffer):
             ReplayElement(ACTION, self._action_shape, self._action_dtype),
             ReplayElement(REWARD, self._reward_shape, self._reward_dtype),
             ReplayElement(TERMINAL, (), np.int8),
+<<<<<<< Updated upstream
             ReplayElement(TIMEOUT, (), np.bool),
+=======
+            ReplayElement(TIMEOUT, (), bool),
+>>>>>>> Stashed changes
         ]
 
         obs_elements = []
@@ -708,7 +712,11 @@ class UniformReplayBufferSingleProcess(ReplayBuffer):
                 else:
                     # np.argmax of a bool array returns index of the first True.
                     trajectory_length = np.argmax(
+<<<<<<< Updated upstream
                         trajectory_terminals.astype(np.bool),
+=======
+                        trajectory_terminals.astype(bool),
+>>>>>>> Stashed changes
                         0) + 1
 
                 next_state_index = state_index + trajectory_length

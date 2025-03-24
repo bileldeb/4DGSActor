@@ -40,6 +40,7 @@ tmux new-session -d -s ${exp_name}
 #######
 batch_size=1
 tasks=[close_jar,open_drawer,sweep_to_dustpan_of_size,meat_off_grill,turn_tap,slide_block_to_color_target,put_item_in_drawer,reach_and_drag,push_buttons,stack_blocks]
+tasks=[close_jar,sweep_to_dustpan_of_size,meat_off_grill,slide_block_to_color_target,reach_and_drag,push_buttons]
 demo=20
 render_freq=2000
 

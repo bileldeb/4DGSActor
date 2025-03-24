@@ -51,7 +51,11 @@ class StableDiffusionHandler(PathHandler):
 
     PREFIX = "sd://"
     URLS = {
+<<<<<<< Updated upstream
         "v1-3": "https://huggingface.co/CompVis/stable-diffusion-v-1-3-original/resolve/main/sd-v1-3.ckpt",  # noqa
+=======
+        "v1-3": "https://hf-mirror.com/CompVis/stable-diffusion-v-1-3-original/resolve/main/sd-v1-3.ckpt",  # noqa
+>>>>>>> Stashed changes
         # following is not used yet
         # we are adding them here for generalization
         "v1-4": "https://huggingface.co/CompVis/stable-diffusion-v-1-4-original/resolve/main/sd-v1-4.ckpt",  # noqa

@@ -16,7 +16,7 @@ rlbench:
     episode_length: 15
     # full cameras: [front,left_shoulder,right_shoulder,wrist]
     # we find that one camera is very enough to achieve decent performance.
-    cameras: [front]
+    cameras: [front] #[front,left_shoulder,right_shoulder,wrist]
     camera_resolution: [128, 128]
     scene_bounds: [-0.3, -0.5, 0.6, 0.7, 0.5, 1.6]
     include_lang_goal_in_obs: True
