@@ -224,6 +224,26 @@ class QFunction(nn.Module):
         if bounds.shape[0] != b:
             bounds = bounds.repeat(b, 1)
 
+
+        # prepare nerf rendering
+        focal = camera_intrinsics[0][:, 0, 0]  # [SB]
+        cx = 128 / 2
+        cy = 128 / 2
+        c = torch.tensor([cx, cy], dtype=torch.float32).unsqueeze(0)
+
+        gt_rgb = nerf_target_rgb    # [1,128,128,3]
+        gt_pose = nerf_target_pose @ self._coord_trans # remember to do this
+        gt_depth = nerf_target_depth
+
+        data = self._neural_renderer.encode_data(
+            rgb=rgb, depth=depth, pcd=pcd, focal=focal, c=c, lang_goal=None, tgt_pose=gt_pose, tgt_intrinsic=gt_intrinsic,
+            dec_fts=dec_fts, lang=language, next_tgt_pose=next_gt_pose, next_tgt_intrinsic=next_gt_intrinsic, 
+            action=action, step=step,)
+
+        # Gaussian Generator
+        data = self._neural_renderer.gs_model(data)
+        gs_pcd = data['final_gspcd']
+
         # forward pass
         q_trans, \
         q_rot_and_grip,\
@@ -231,6 +251,7 @@ class QFunction(nn.Module):
         voxel_grid_feature, \
         multi_scale_voxel_list, \
         lang_embedd = self._qnet(voxel_grid,  # [1,10,100^3]
+                                gs_pcd,
                                 proprio, # [1,4]
                                 lang_goal_emb, # [1,1024]
                                 lang_token_embs, # [1,77,512]
@@ -241,16 +262,10 @@ class QFunction(nn.Module):
         # neural rendering as an auxiliary loss
         rendering_loss_dict = {}
         if use_neural_rendering:    # train default: True; eval default: False
-            # prepare nerf rendering
-            focal = camera_intrinsics[0][:, 0, 0]  # [SB]
-            cx = 128 / 2
-            cy = 128 / 2
-            c = torch.tensor([cx, cy], dtype=torch.float32).unsqueeze(0)
+
 
             if nerf_target_rgb is not None:
-                gt_rgb = nerf_target_rgb    # [1,128,128,3]
-                gt_pose = nerf_target_pose @ self._coord_trans # remember to do this
-                gt_depth = nerf_target_depth
+
 
                 # We only use the front camera
                 rgb_0 = rgb[0]
@@ -258,17 +273,8 @@ class QFunction(nn.Module):
                 pcd_0 = pcd[0]
 
                 # render loss
-                rendering_loss_dict, _ = self._neural_renderer(
-                    rgb=rgb_0, pcd=pcd_0, depth=depth_0, \
-                    language=lang_embedd, \
-                    dec_fts=voxel_grid_feature, \
-                    gt_rgb=gt_rgb, gt_depth=gt_depth, \
-                    focal=focal, c=c, \
-                    gt_pose=gt_pose, gt_intrinsic=nerf_target_camera_intrinsic, \
-                    lang_goal=lang_goal, 
-                    next_gt_pose=nerf_next_target_pose, next_gt_intrinsic=nerf_next_target_camera_intrinsic, 
-                    next_gt_rgb=nerf_next_target_rgb, step=step, action=action,
-                    training=True,
+                rendering_loss_dict, _ = self._neural_renderer(data,
+                    rgb=rgb_0,gt_rgb=gt_rgb,next_gt_rgb=nerf_next_target_rgb, step=step,training=True,
                     )
 
             else:

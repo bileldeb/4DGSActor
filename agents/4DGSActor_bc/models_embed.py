@@ -252,40 +252,46 @@ class GeneralizableGSEmbedNet(nn.Module):
         data['opacity_maps'] = self.opacity_activation(opacity_maps)
         data['feature_maps'] = feature_maps # [B, N, 3]
 
+        if not self.use_semantic_feature:
+            # dyna_input: (d_latent, d_in)
+            dyna_input = torch.cat((
+                point_latent,   # [N, 128]
+                data['xyz_maps'].detach().reshape(N, 3), 
+                features_dc_maps.detach().reshape(N, 3),
+                features_rest_maps.detach().reshape(N, 9),
+                data['rot_maps'].detach().reshape(N, 4),
+                data['scale_maps'].detach().reshape(N, 3),
+                data['opacity_maps'].detach().reshape(N, 1),
+                # d_in:
+                z_feature,
+            ), dim=-1) # no batch dim
+        else:
+            dyna_input = torch.cat((
+                point_latent,   # [N, 128]
+                data['xyz_maps'].detach().reshape(N, 3), 
+                features_dc_maps.detach().reshape(N, 3),
+                features_rest_maps.detach().reshape(N, 9),
+                data['rot_maps'].detach().reshape(N, 4),
+                data['scale_maps'].detach().reshape(N, 3),
+                data['opacity_maps'].detach().reshape(N, 1),
+                data['feature_maps'].detach().reshape(N, 3),
+                # d_in:
+                z_feature,  
+            ), dim=-1) # no batch dim
+        data['final_gspcd'] = dyna_input.unsqueeze(0)
+        return data
+
+
+    def maybe_next_pred(self,data):
+        SB, N, _ = data['xyz'].shape
+        dyna_input = data['final_gspcd'].squeeze(0)
         # Dynamic Modeling: predict next gaussian maps
         if self.use_dynamic_field: #and data['step'] >= self.warm_up:
-
-            if not self.use_semantic_feature:
-                # dyna_input: (d_latent, d_in)
-                dyna_input = torch.cat((
-                    point_latent,   # [N, 128]
-                    data['xyz_maps'].detach().reshape(N, 3), 
-                    features_dc_maps.detach().reshape(N, 3),
-                    features_rest_maps.detach().reshape(N, 9),
-                    data['rot_maps'].detach().reshape(N, 4),
-                    data['scale_maps'].detach().reshape(N, 3),
-                    data['opacity_maps'].detach().reshape(N, 1),
-                    # d_in:
-                    z_feature,
-                ), dim=-1) # no batch dim
-            else:
-                dyna_input = torch.cat((
-                    point_latent,   # [N, 128]
-                    data['xyz_maps'].detach().reshape(N, 3), 
-                    features_dc_maps.detach().reshape(N, 3),
-                    features_rest_maps.detach().reshape(N, 9),
-                    data['rot_maps'].detach().reshape(N, 4),
-                    data['scale_maps'].detach().reshape(N, 3),
-                    data['opacity_maps'].detach().reshape(N, 1),
-                    data['feature_maps'].detach().reshape(N, 3),
-                    # d_in:
-                    z_feature,  
-                ), dim=-1) # no batch dim
-
             # voxel embedding, stop gradient (gaussian xyz), (128+39)+3=170
             if self.use_action:
                 dyna_input = torch.cat((dyna_input, data['action'].repeat(N, 1)), dim=-1)   # action detach
-
+            combine_index = None
+            dim_size = None
             next_split_network_outputs, _ = self.gs_deformation_field(
                 dyna_input,
                 combine_inner_dims=(self.num_views_per_obj, N),

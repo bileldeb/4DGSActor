@@ -247,10 +247,8 @@ class NeuralRenderer(nn.Module):
 
         return novel_view_data
 
-    def forward(self, pcd, dec_fts, language, gt_rgb=None, gt_pose=None, gt_intrinsic=None, rgb=None, depth=None, camera_intrinsics=None, camera_extrinsics=None, 
-                focal=None, c=None, lang_goal=None, gt_depth=None,
-                next_gt_pose=None, next_gt_intrinsic=None, next_gt_rgb=None, step=None, action=None,
-                training=True):
+
+    def forward(self,data,rgb=None,gt_rgb=None, next_gt_rgb=None, step=None,training=None):
         '''
         main forward function
         Return:
@@ -258,12 +256,6 @@ class NeuralRenderer(nn.Module):
         :ret_dict: dict, rendered images
         '''
         bs = rgb.shape[0]
-
-        data = self.encode_data(
-            rgb=rgb, depth=depth, pcd=pcd, focal=focal, c=c, lang_goal=None, tgt_pose=gt_pose, tgt_intrinsic=gt_intrinsic,
-            dec_fts=dec_fts, lang=language, next_tgt_pose=next_gt_pose, next_tgt_intrinsic=next_gt_intrinsic, 
-            action=action, step=step,
-        )
 
         render_novel = None
         next_render_novel = None
@@ -276,8 +268,6 @@ class NeuralRenderer(nn.Module):
 
         # if gt_rgb is not None:
         if training:
-            # Gaussian Generator
-            data = self.gs_model(data)
 
             # Gaussian Render
             data = self.pts2render(data, bg_color=self.bg_color) # default: [0, 0, 0]
@@ -320,7 +310,10 @@ class NeuralRenderer(nn.Module):
                 loss_embed = torch.tensor(0.)
 
             # next frame prediction
+            data = self.gs_model.maybe_next_pred(data)
             if self.use_dynamic_field and (next_gt_rgb is not None) and ('xyz_maps' in data['next']):
+                data['final_gspcd'] = dyna_input.unsqueeze(0)
+
                 data['next'] = self.pts2render(data['next'], bg_color=self.bg_color)
                 next_render_novel = data['next']['novel_view']['img_pred'].permute(0, 2, 3, 1)
                 # loss_dyna = l1_loss(next_render_novel, next_gt_rgb)
@@ -353,13 +346,11 @@ class NeuralRenderer(nn.Module):
         else:
             # no ground-truth given, rendering (inference)
             with torch.no_grad():
-                # Gaussian Generator
-                data = self.gs_model(data)
                 # Gaussian Render
                 data = self.pts2render(data, bg_color=self.bg_color) # default: [0, 0, 0]
                 render_novel = data['novel_view']['img_pred'].permute(0, 2, 3, 1) # channel last
                 render_embed = data['novel_view']['embed_pred'].permute(0, 2, 3, 1)
-                
+                data = self.gs_model.maybe_next_pred(data)
                 if self.use_dynamic_field and 'xyz_maps' in data['next']:
                     data['next'] = self.pts2render(data['next'], bg_color=self.bg_color)
                     next_render_novel = data['next']['novel_view']['img_pred'].permute(0, 2, 3, 1)
