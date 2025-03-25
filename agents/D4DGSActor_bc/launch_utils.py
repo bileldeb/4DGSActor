@@ -20,9 +20,9 @@ from helpers.preprocess_agent import PreprocessAgent
 from helpers.clip.core.clip import tokenize
 from helpers.language_model import create_language_model
 
-from agents.manigaussian_bc.perceiver_lang_io import PerceiverVoxelLangEncoder
-from agents.manigaussian_bc.qattention_manigaussian_bc_agent import QAttentionPerActBCAgent
-from agents.manigaussian_bc.qattention_stack_agent import QAttentionStackAgent
+from agents.D4DGSActor_bc.perceiver_lang_io import PerceiverVoxelLangEncoder
+from agents.D4DGSActor_bc.qattention_D4DGSActor_bc_agent import QAttentionPerActBCAgent
+from agents.D4DGSActor_bc.qattention_stack_agent import QAttentionStackAgent
 
 import torch
 import torch.nn as nn
