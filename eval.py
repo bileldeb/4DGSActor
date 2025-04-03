@@ -54,6 +54,10 @@ def eval_seed(train_cfg,
         from agents import manigaussian_bc
         train_cfg.method.use_neural_rendering = False # when doing eval, we suppress neural rendering
         agent = manigaussian_bc.launch_utils.create_agent(train_cfg)
+    elif train_cfg.method.name == 'D4DGSActor_BC':
+        from agents import D4DGSActor_bc
+        train_cfg.method.use_neural_rendering = False # when doing eval, we suppress neural rendering
+        agent = D4DGSActor_bc.launch_utils.create_agent(train_cfg)
     else:
         raise ValueError('Method %s does not exists.' % train_cfg.method.name)
 

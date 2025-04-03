@@ -14,6 +14,7 @@ rlbench:
     num_view_for_nerf: 21
     demo_path: /my/demo/path    # will be removed by "${cur_dir}/data/train_data" in cli
     episode_length: 15
+    max_timesteps_per_sequence: 30
     # full cameras: [front,left_shoulder,right_shoulder,wrist]
     # we find that one camera is very enough to achieve decent performance.
     cameras: [front] #[front,left_shoulder,right_shoulder,wrist]

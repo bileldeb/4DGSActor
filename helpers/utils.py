@@ -323,6 +323,8 @@ def extract_obs(obs: Observation,
                 channels_last: bool = False,
                 episode_length: int = 10,
                 next_obs: Observation = None,
+                next_obs_sequence = None,
+                max_timesteps_per_sequence=30,
                 ):
     obs.joint_velocities = None
     grip_mat = obs.gripper_matrix
@@ -404,6 +406,25 @@ def extract_obs(obs: Observation,
             obs_dict['nerf_next_multi_view_rgb'] = None
             obs_dict['nerf_next_multi_view_depth'] = None
             obs_dict['nerf_next_multi_view_camera'] = None
+
+    # for autoregressive next frame prediction
+    if next_obs_sequence is not None:
+        nerf_next_multi_view_rgb_sequence = [None]*max_timesteps_per_sequence
+        nerf_next_multi_view_depth_sequence = [None]*max_timesteps_per_sequence
+        nerf_next_multi_view_camera_sequence = [None]*max_timesteps_per_sequence
+        next_pcd_sequence = [None]*max_timesteps_per_sequence
+        for i,obs in enumerate(next_obs_sequence):
+            if i+1>max_timesteps_per_sequence:
+                break
+            if obs.nerf_multi_view_rgb is not None:
+                nerf_next_multi_view_depth_sequence[i]=obs.nerf_multi_view_rgb_sequence
+                nerf_next_multi_view_depth_sequence[i]=obs.nerf_multi_view_depth_sequence
+                nerf_next_multi_view_camera_sequence[i]=obs.nerf_multi_view_camera_sequence
+                next_pcd_sequence[i]=[obs[f'{cname}_point_cloud'] for cname in cameras]
+        obs_dict['nerf_next_multi_view_rgb_sequence'] = nerf_next_multi_view_rgb_sequence
+        obs_dict['nerf_next_multi_view_depth_sequence'] = nerf_next_multi_view_depth_sequence
+        obs_dict['nerf_next_multi_view_camera_sequence'] = nerf_next_multi_view_camera_sequence
+        obs_dict['next_pcd_sequence'] = next_pcd_sequence
 
     # if next_obs is None, we do not add the next frame prediction
 

@@ -85,11 +85,13 @@ def create_replay(batch_size: int, timesteps: int,
     
     # for next nerf
     observation_elements.append(
-        ObservationElement('nerf_next_multi_view_rgb', (num_view_for_nerf,), np.object_))
+        ObservationElement('nerf_next_multi_view_rgb_sequence', (cfg.rlbench.max_timesteps_per_sequence,num_view_for_nerf,), np.object_))
     observation_elements.append(
-        ObservationElement('nerf_next_multi_view_depth', (num_view_for_nerf,), np.object_))
+        ObservationElement('nerf_next_multi_view_depth_sequence', (cfg.rlbench.max_timesteps_per_sequence,num_view_for_nerf,), np.object_))
     observation_elements.append(
-        ObservationElement('nerf_next_multi_view_camera', (num_view_for_nerf,), np.object_))
+        ObservationElement('nerf_next_multi_view_camera_sequence', (cfg.rlbench.max_timesteps_per_sequence,num_view_for_nerf,), np.object_))
+    observation_elements.append(
+        ObservationElement('next_pcd_sequence', (cfg.rlbench.max_timesteps_per_sequence,), np.object_))
 
     # discretized translation, discretized rotation, discrete ignore collision, 6-DoF gripper pose, and pre-trained language embeddings
     observation_elements.extend([
@@ -206,12 +208,15 @@ def _add_keypoints_to_replay(
         device = 'cpu'):
     prev_action = None
     obs = inital_obs    # initial observation is 0
+    prev_obs_index = 0
 
    
     for k, keypoint in enumerate(episode_keypoints):    # demo[-1].nerf_multi_view_rgb is None
         obs_tp1 = demo[keypoint]    # e.g, 44
+        sequence_tp1 = demo[prev_obs_index:keypoint]
 
         obs_tm1 = demo[max(0, keypoint - 1)]    # previous observation, e.g., 43
+        sequence_tm1 = demo[prev_obs_index:max(0, keypoint - 1)]
 
         trans_indicies, rot_grip_indicies, ignore_collisions, action, attention_coordinates = _get_action(
             obs_tp1, obs_tm1, rlbench_scene_bounds, voxel_sizes, bounds_offset,
@@ -222,8 +227,8 @@ def _add_keypoints_to_replay(
 
         obs_dict = utils.extract_obs(obs, t=k, prev_action=prev_action,
                                      cameras=cameras, episode_length=cfg.rlbench.episode_length,
-                                     next_obs=obs_tp1 if not terminal else obs_tm1,
-                                     )
+                                     next_obs_sequence=sequence_tp1 if not terminal else sequence_tm1,
+                                     max_timesteps_per_sequence=cfg.rlbench.max_timesteps_per_sequence)
         # FIXME: better way to use the last sample for next frame prediction?
         sentence_emb, token_embs = language_model.extract(description)
 
@@ -248,6 +253,7 @@ def _add_keypoints_to_replay(
         timeout = False
         replay.add(action, reward, terminal, timeout, **others)
         obs = obs_tp1
+        prev_obs_index = keypoint
 
     # final step
     obs_dict_tp1 = utils.extract_obs(obs_tp1, t=k + 1, prev_action=prev_action,
