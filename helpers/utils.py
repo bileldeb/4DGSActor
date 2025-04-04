@@ -424,7 +424,7 @@ def extract_obs(obs: Observation,
         obs_dict['nerf_next_multi_view_rgb_sequence'] = nerf_next_multi_view_rgb_sequence
         obs_dict['nerf_next_multi_view_depth_sequence'] = nerf_next_multi_view_depth_sequence
         obs_dict['nerf_next_multi_view_camera_sequence'] = nerf_next_multi_view_camera_sequence
-        obs_dict['next_pcd_sequence'] = next_pcd_sequence
+        obs_dict['nerf_next_pcd_sequence'] = next_pcd_sequence
 
     # if next_obs is None, we do not add the next frame prediction
 

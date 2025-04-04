@@ -10,8 +10,10 @@ import os.path as osp
 import warnings
 from termcolor import colored, cprint
 
-from agents.manigaussian_bc.utils import PositionalEncoding, visualize_pcd
-from agents.manigaussian_bc.resnetfc import ResnetFC
+from agents.D4DGSActor_bc.utils import PositionalEncoding, visualize_pcd
+from agents.D4DGSActor_bc.resnetfc import ResnetFC
+from agents.D4DGSActor_bc.time_utils import get_embedder
+
 
 from typing import List
 import numpy as np
@@ -42,6 +44,20 @@ class GeneralizableGSEmbedNet(nn.Module):
 
         self.coordinate_bounds = cfg.coordinate_bounds # default: [-0.3, -0.5, 0.6, 0.7, 0.5, 1.6]
         print(colored(f"[GeneralizableNeRFEmbedNet] coordinate_bounds: {self.coordinate_bounds}", "red"))
+
+        self.d_latent = d_latent = cfg.d_latent # 128
+
+        #preprocess
+        self.preprocess = ResnetFC(
+                d_in=3, # xyz
+                d_latent=3,  # rgb
+                d_lang=0, 
+                d_out=self.d_latent, 
+                d_hidden=cfg.mlp.d_hidden, 
+                n_blocks=cfg.mlp.n_blocks, 
+                combine_layer=cfg.mlp.combine_layer,
+                beta=cfg.mlp.beta, use_spade=cfg.mlp.use_spade,
+            )
     
         self.use_xyz = cfg.use_xyz
         d_in = 3 if self.use_xyz else 1
@@ -61,9 +77,9 @@ class GeneralizableGSEmbedNet(nn.Module):
         split_dimensions, scale_inits, bias_inits = self._get_splits_and_inits(cfg)
 
         # backbone
-        self.d_latent = d_latent = cfg.d_latent # 128
         self.d_lang = d_lang = cfg.d_lang   # 128
         self.d_out = sum(split_dimensions)
+
 
         self.encoder = ResnetFC(
                 d_in=d_in, # xyz
@@ -94,12 +110,14 @@ class GeneralizableGSEmbedNet(nn.Module):
         self.use_action = cfg.next_mlp.use_action
         cprint(f"[GeneralizableGSEmbedNet] Using dynamic field: {self.use_dynamic_field}", "red")
         if self.use_dynamic_field:
-            self.use_semantic_feature = (cfg.foundation_model_name == 'diffusion')
+            self.embed_time_fn, self.time_input_ch = get_embedder(10, 1)
+            self.use_semantic_feature = (cfg.foundation_model_name == 'diffusion' or cfg.foundation_model_name == 'dinov2')
             cprint(f"[GeneralizableGSEmbedNet] Using action input: {self.use_action}", "red")
             cprint(f"[GeneralizableGSEmbedNet] Using semantic feature: {self.use_semantic_feature}", "red")
             next_d_in = self.d_out + self.d_in
             next_d_in = next_d_in + 8 if self.use_action else next_d_in  # action: 8 dim
             next_d_in = next_d_in if self.use_semantic_feature else next_d_in - 3
+            next_d_in = next_d_in + self.time_input_ch #temporal embedding
             self.gs_deformation_field = ResnetFC(
                     d_in=next_d_in, # all things despite volumetric representation (26 + 39 + 8 -3 = 70)
                     d_latent=self.d_latent,
@@ -198,21 +216,26 @@ class GeneralizableGSEmbedNet(nn.Module):
 
         SB, N, _ = data['xyz'].shape
         NS = self.num_views_per_obj # 1
+        xyz = data['xyz']                                        # [1,N,3]
+        xyz = torch.cat((xyz, xyz+torch.randn_like(xyz)), dim=1) # [1,2N,3]
+        rgb = data['img'].rearrange(pcd, 'b c h w -> b (h w) c') # [1,N,3]
+        rgb = torch.cat((rgb, rgb+torch.randn_like(rgb)), dim=1) # [1,2N,3]
 
-        canon_xyz = self.world_to_canonical(data['xyz'])    # [1,N,3], min:-2.28, max:1.39
+        canon_xyz = self.world_to_canonical(xyz)    # [1,N,3], min:-2.28, max:1.39
+        in_pcd = torch.cat((canon_xyz, rgb), dim=-1) # [1,2N,6]
 
-        # volumetric sampling
-        point_latent = self.sample_in_canonical_voxel(canon_xyz, data['dec_fts']) # [bs, N, 128]->[bs, 128, N]
-        point_latent = point_latent.reshape(-1, self.d_latent)  # (SB * NS * B, latent)  [N, 128]
+        point_latent = self.preprocess(in_pcd) # [1,2*N,128]
+        point_latent = point_latent.reshape(-1, self.d_latent)  # (SB * NS * B, latent)  [2N, 128]
+
 
         if self.use_xyz:    # True
             z_feature = canon_xyz.reshape(-1, 3)  # (SB*B, 3)
 
         if self.use_code:    # True
             # Positional encoding (no viewdirs)
-            z_feature = self.code(z_feature)    # [N, 39]
+            z_feature = self.code(z_feature)    # [2N, 39]
 
-        latent = torch.cat((point_latent, z_feature), dim=-1) # [N, 128+39]
+        latent = torch.cat((point_latent, z_feature), dim=-1) # [2N, 128+39]
 
         # Camera frustum culling stuff, currently disabled
         combine_index = None
@@ -220,14 +243,14 @@ class GeneralizableGSEmbedNet(nn.Module):
         # backbone
         latent, _ = self.encoder(
             latent,
-            combine_inner_dims=(self.num_views_per_obj, N),
+            combine_inner_dims=(self.num_views_per_obj, 2*N),
             combine_index=combine_index,
             dim_size=dim_size,
             language_embed=data['lang'],
             batch_size=SB,
             )   # 26
 
-        latent = latent.reshape(-1, N, self.d_out)  # [1, N, d_out]
+        latent = latent.reshape(-1, 2*N, self.d_out)  # [1, 2N, d_out]
 
         ## regress gaussian parms
         split_network_outputs = self.gs_parm_regresser(latent) # [1, N, (3, 1, 3, 4, 3, 9)]
@@ -245,69 +268,65 @@ class GeneralizableGSEmbedNet(nn.Module):
         scale_maps = self.scaling_activation(scale_maps)    # exp
         scale_maps = torch.clamp_max(scale_maps, 0.05)
 
-        data['xyz_maps'] = data['xyz'] + xyz_maps   # [B, N, 3]
-        data['sh_maps'] = sh_out    # [B, N, 4, 3]
+        data['xyz_maps'] = xyz + xyz_maps   # [B, 2N, 3]
+        data['sh_maps'] = sh_out    # [B, 2N, 4, 3]
         data['rot_maps'] = self.rotation_activation(rot_maps, dim=-1)
         data['scale_maps'] = scale_maps
         data['opacity_maps'] = self.opacity_activation(opacity_maps)
-        data['feature_maps'] = feature_maps # [B, N, 3]
+        data['feature_maps'] = feature_maps # [B, 2N, 3]
 
-        if not self.use_semantic_feature:
-            # dyna_input: (d_latent, d_in)
-            dyna_input = torch.cat((
-                point_latent,   # [N, 128]
-                data['xyz_maps'].detach().reshape(N, 3), 
-                features_dc_maps.detach().reshape(N, 3),
-                features_rest_maps.detach().reshape(N, 9),
-                data['rot_maps'].detach().reshape(N, 4),
-                data['scale_maps'].detach().reshape(N, 3),
-                data['opacity_maps'].detach().reshape(N, 1),
-                # d_in:
-                z_feature,
-            ), dim=-1) # no batch dim
-        else:
-            dyna_input = torch.cat((
-                point_latent,   # [N, 128]
-                data['xyz_maps'].detach().reshape(N, 3), 
-                features_dc_maps.detach().reshape(N, 3),
-                features_rest_maps.detach().reshape(N, 9),
-                data['rot_maps'].detach().reshape(N, 4),
-                data['scale_maps'].detach().reshape(N, 3),
-                data['opacity_maps'].detach().reshape(N, 1),
-                data['feature_maps'].detach().reshape(N, 3),
-                # d_in:
-                z_feature,  
-            ), dim=-1) # no batch dim
+        # dyna_input: (d_latent, d_in)
+        dyna_input = torch.cat((
+            point_latent,   # [N, 128]
+            data['xyz_maps'].detach().reshape(2*N, 3), 
+            features_dc_maps.detach().reshape(2*N, 3),
+            features_rest_maps.detach().reshape(2*N, 9),
+            data['rot_maps'].detach().reshape(2*N, 4),
+            data['scale_maps'].detach().reshape(2*N, 3),
+            data['opacity_maps'].detach().reshape(2*N, 1),
+            data['feature_maps'].detach().reshape(2*N, 3) if self.use_semantic_feature else torch.tensor([],dtype = point_latent.dtype),
+            # d_in:
+            z_feature,
+        ), dim=-1) # no batch dim
+
         data['final_gspcd'] = dyna_input.unsqueeze(0)
         return data
 
 
     def maybe_next_pred(self,data):
-        SB, N, _ = data['xyz'].shape
-        dyna_input = data['final_gspcd'].squeeze(0)
-        # Dynamic Modeling: predict next gaussian maps
         if self.use_dynamic_field: #and data['step'] >= self.warm_up:
-            # voxel embedding, stop gradient (gaussian xyz), (128+39)+3=170
+            SB, NN, _ = data['xyz'].shape
+            dyna_input = data['final_gspcd'].squeeze(0)
             if self.use_action:
-                dyna_input = torch.cat((dyna_input, data['action'].repeat(N, 1)), dim=-1)   # action detach
-            combine_index = None
-            dim_size = None
-            next_split_network_outputs, _ = self.gs_deformation_field(
-                dyna_input,
-                combine_inner_dims=(self.num_views_per_obj, N),
-                combine_index=combine_index,
-                dim_size=dim_size,
-                language_embed=data['lang'],
-                batch_size=SB,
-                )
-            next_xyz_maps, next_rot_maps = next_split_network_outputs.split([3, 4], dim=-1)
+                dyna_input = torch.cat((dyna_input, data['action'].repeat(NN, 1)), dim=-1)   # action detach
+            sl = data['next']['seq_length']
+            for i in range(sl):
+                t_emb = self.embed_time_fn(i)
+                dyna_input = torch.cat((dyna_input, t_emb.repeat(NN, 1)), dim=-1)
+                # Dynamic Modeling: predict next gaussian maps
+                # voxel embedding, stop gradient (gaussian xyz), (128+39)+3=170
+                combine_index = None
+                dim_size = None
+                next_split_network_outputs, _ = self.gs_deformation_field(
+                    dyna_input,
+                    combine_inner_dims=(self.num_views_per_obj, NN),
+                    combine_index=combine_index,
+                    dim_size=dim_size,
+                    language_embed=data['lang'],
+                    batch_size=SB,
+                    )
+                next_xyz_maps, next_rot_maps = next_split_network_outputs.split([3, 4], dim=-1)
 
-            data['next']['xyz_maps'] = data['xyz_maps'].detach() + next_xyz_maps
-            data['next']['sh_maps'] = data['sh_maps'].detach()
-            data['next']['rot_maps'] = self.rotation_activation(data['rot_maps'].detach() + next_rot_maps, dim=-1)
-            data['next']['scale_maps'] = data['scale_maps'].detach()
-            data['next']['opacity_maps'] = data['opacity_maps'].detach()
-            data['next']['feature_maps'] = data['feature_maps'].detach()
+                data['next'][i]['xyz_maps'] = data['xyz_maps'].detach() + next_xyz_maps
+                data['next'][i]['sh_maps'] = data['sh_maps'].detach()
+                data['next'][i]['rot_maps'] = self.rotation_activation(data['rot_maps'].detach() + next_rot_maps, dim=-1)
+                data['next'][i]['scale_maps'] = data['scale_maps'].detach()
+                data['next'][i]['opacity_maps'] = data['opacity_maps'].detach()
+                data['next'][i]['feature_maps'] = data['feature_maps'].detach()
+
+                dyna_input[:,self.d_in:self.d_in+3] = data['next'][i]['xyz_maps'].reshape(-1, 3)
+                dyna_input[:,self.d_in+3+3+9:self.d_in+3+3+9+4] = data['next'][i]['rot_maps'].reshape(-1, 4)
+                dyna_input = dyna_input[:,:-self.time_input_ch]
 
         return data
     

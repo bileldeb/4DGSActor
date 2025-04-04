@@ -167,7 +167,7 @@ class NeuralRenderer(nn.Module):
 
     def encode_data(self, pcd, dec_fts, lang, 
                     rgb=None, depth=None, focal=None, c=None, lang_goal=None, tgt_pose=None, tgt_intrinsic=None,
-                    next_tgt_pose=None, next_tgt_intrinsic=None, action=None, step=None):
+                    next_tgt_pose_sequence=None, next_tgt_intrinsic_sequence=None, action=None, step=None):
         '''prepare data dict'''
         bs = pcd.shape[0]
         data = {}
@@ -190,15 +190,18 @@ class NeuralRenderer(nn.Module):
             data_novel = self.get_novel_calib(data)
             data['novel_view'].update(data_novel)
 
-        if self.use_dynamic_field:
-            data['next'] = {
-                'extr': next_tgt_pose,
-                'intr': next_tgt_intrinsic,
-                'novel_view': {},
-            }
-            if data['next']['intr'] is not None:
-                data_novel = self.get_novel_calib(data['next'])
-                data['next']['novel_view'].update(data_novel)
+        if self.use_dynamic_field and next_tgt_pose_sequence is not None:
+            sl = next_tgt_intrinsic_sequence.shape[1]
+            data['next']['sequence_length'] = sl
+            for i in range(sl):
+                data['next'][i] = {
+                    'extr': next_tgt_pose_sequence[:,i,...],
+                    'intr': next_tgt_intrinsic_sequence[:,i,...],
+                    'novel_view': {},
+                }
+                if data['next'][i]['intr'] is not None:
+                        data_novel = self.get_novel_calib(data['next'][i])
+                        data['next'][i]['novel_view'].update(data_novel)
 
         return data
 
@@ -248,7 +251,7 @@ class NeuralRenderer(nn.Module):
         return novel_view_data
 
 
-    def forward(self,data,rgb=None,gt_rgb=None, next_gt_rgb=None, step=None,training=None):
+    def forward(self,data,rgb=None,gt_rgb=None, next_gt_rgb_sequence=None,next_gt_pcd_sequence = None, step=None,training=None):
         '''
         main forward function
         Return:
@@ -271,6 +274,7 @@ class NeuralRenderer(nn.Module):
 
             # Gaussian Render
             data = self.pts2render(data, bg_color=self.bg_color) # default: [0, 0, 0]
+            N = data['xyz_maps'].shape[1]//2
 
             # Loss
             render_novel = data['novel_view']['img_pred'].permute(0, 2, 3, 1)   # [1, 128, 128, 3]
@@ -295,6 +299,12 @@ class NeuralRenderer(nn.Module):
             loss = 0.
             # loss_rgb = self.cfg.lambda_l1 * Ll1 + self.cfg.lambda_ssim * Lssim
             loss_rgb = Ll1
+
+            # shape consistency loss\regularization
+            loss_reg = l2_loss(data['xyz_maps'][:,:N,:], data['xyz'])
+            ###
+
+
             loss += loss_rgb
 
             if gt_embed is not None:
@@ -312,23 +322,20 @@ class NeuralRenderer(nn.Module):
             # next frame prediction
             data = self.gs_model.maybe_next_pred(data)
             if self.use_dynamic_field and (next_gt_rgb is not None) and ('xyz_maps' in data['next']):
-                data['final_gspcd'] = dyna_input.unsqueeze(0)
-
-                data['next'] = self.pts2render(data['next'], bg_color=self.bg_color)
-                next_render_novel = data['next']['novel_view']['img_pred'].permute(0, 2, 3, 1)
-                # loss_dyna = l1_loss(next_render_novel, next_gt_rgb)
-                loss_dyna = l2_loss(next_render_novel, next_gt_rgb)
-                lambda_dyna = self.cfg.lambda_dyna if step >= self.cfg.next_mlp.warm_up else 0.
+                sl = data['next']['sequence_length']
+                loss_dyna = torch.tensor(0.)
+                for i in range(sl):
+                    data['next'][i] = self.pts2render(data['next'][i], bg_color=self.bg_color)
+                    next_render_novel = data['next'][i]['novel_view']['img_pred'].permute(0, 2, 3, 1)
+                    # loss_dyna = l1_loss(next_render_novel, next_gt_rgb)
+                    loss_dyna = l2_loss(next_render_novel, next_gt_rgb_sequence[:,i,...])
+                    lambda_dyna = self.cfg.lambda_dyna if step >= self.cfg.next_mlp.warm_up else 0.
+                    next_pcd = einops.rearrange(next_gt_pcd_sequence[:,i,...].squeeze(1), 'b c h w -> b (h w) c')
+                    loss_reg += l2_loss(data['next'][i]['xyz_maps'][:,:N,:], next_pcd)
+                
+                loss += lambda_reg * loss_reg
                 loss += lambda_dyna * loss_dyna
 
-                loss_reg = torch.tensor(0.)
-                # TODO: regularization on deformation
-                # if self.cfg.lambda_reg > 0:
-                #     loss_reg = l2_loss(data['next']['xyz_maps'], data['xyz_maps'].detach())
-                #     lambda_reg = self.cfg.lambda_reg if step >= self.cfg.next_mlp.warm_up else 0.
-                #     loss += lambda_reg * loss_reg
-
-                # TODO: local rigid loss
 
             else:
                 loss_dyna = torch.tensor(0.)

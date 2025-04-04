@@ -194,8 +194,8 @@ class QFunction(nn.Module):
                 use_neural_rendering=False, nerf_target_rgb=None, nerf_target_depth=None,
                 nerf_target_pose=None, nerf_target_camera_intrinsic=None,
                 lang_goal=None,
-                nerf_next_target_rgb=None, nerf_next_target_pose=None, nerf_next_target_depth=None,
-                nerf_next_target_camera_intrinsic=None,
+                nerf_next_target_rgb_sequence=None, nerf_next_target_pose_sequence=None, nerf_next_target_depth_sequence=None,
+                nerf_next_target_camera_intrinsic_sequence=None,nerf_next_pcd_sequence=None,
                 gt_embed=None, step=None, action=None):
         '''
         Return Q-functions and neural rendering loss
@@ -237,7 +237,7 @@ class QFunction(nn.Module):
 
         data = self._neural_renderer.encode_data(
             rgb=rgb, depth=depth, pcd=pcd, focal=focal, c=c, lang_goal=None, tgt_pose=gt_pose, tgt_intrinsic=gt_intrinsic,
-            dec_fts=dec_fts, lang=language, next_tgt_pose=next_gt_pose, next_tgt_intrinsic=next_gt_intrinsic, 
+            dec_fts=dec_fts, lang=language, next_tgt_pose_sequence=nerf_next_target_pose_sequence, next_tgt_intrinsic_sequence=nerf_next_target_camera_intrinsic_sequence, 
             action=action, step=step,)
 
         # Gaussian Generator
@@ -274,7 +274,7 @@ class QFunction(nn.Module):
 
                 # render loss
                 rendering_loss_dict, _ = self._neural_renderer(data,
-                    rgb=rgb_0,gt_rgb=gt_rgb,next_gt_rgb=nerf_next_target_rgb, step=step,training=True,
+                    rgb=rgb_0,gt_rgb=gt_rgb,next_gt_rgb_sequence=nerf_next_target_rgb_sequence,next_gt_pcd_sequence=nerf_next_pcd_sequence, step=step,training=True,
                     )
 
             else:
@@ -687,9 +687,10 @@ class QAttentionPerActBCAgent(Agent):
         nerf_multi_view_depth_path = replay_sample['nerf_multi_view_depth']
         nerf_multi_view_camera_path = replay_sample['nerf_multi_view_camera']
 
-        nerf_next_multi_view_rgb_path = replay_sample['nerf_next_multi_view_rgb']
-        nerf_next_multi_view_depth_path = replay_sample['nerf_next_multi_view_depth']
-        nerf_next_multi_view_camera_path = replay_sample['nerf_next_multi_view_camera']
+        nerf_next_multi_view_rgb_sequence_path = replay_sample['nerf_next_multi_view_rgb_sequence']
+        nerf_next_multi_view_depth_sequence_path = replay_sample['nerf_next_multi_view_depth_sequence']
+        nerf_next_multi_view_camera_sequence_path = replay_sample['nerf_next_multi_view_camera_sequence']
+        nerf_next_pcd_sequence = replay_sample['nerf_next_pcd_sequence']
 
         if nerf_multi_view_rgb_path is None or nerf_multi_view_rgb_path[0,0] is None:
             cprint(nerf_multi_view_rgb_path, 'red')
@@ -713,14 +714,7 @@ class QAttentionPerActBCAgent(Agent):
             nerf_multi_view_depth_path = nerf_multi_view_depth_path[:, view_dix]
             nerf_multi_view_camera_path = nerf_multi_view_camera_path[:, view_dix]
 
-            next_view_dix = np.random.randint(0, num_view_by_user)
-            nerf_next_multi_view_rgb_path = nerf_next_multi_view_rgb_path[:, next_view_dix]
-            nerf_next_multi_view_depth_path = nerf_next_multi_view_depth_path[:, next_view_dix]
-            nerf_next_multi_view_camera_path = nerf_next_multi_view_camera_path[:, next_view_dix]
-
-            # load img and camera (support bs>1)
             nerf_target_rgbs, nerf_target_depths, nerf_target_camera_extrinsics, nerf_target_camera_intrinsics = [], [], [], []
-            nerf_next_target_rgbs, nerf_next_target_depths, nerf_next_target_camera_extrinsics, nerf_next_target_camera_intrinsics = [], [], [], []
             for i in range(bs):
                 nerf_target_rgbs.append(parse_img_file(nerf_multi_view_rgb_path[i], mask_gt_rgb=self._mask_gt_rgb))#, session=self._rembg_session))    # FIXME: file_path 'NoneType' object has no attribute 'read'
                 nerf_target_depths.append(parse_depth_file(nerf_multi_view_depth_path[i]))
@@ -728,21 +722,47 @@ class QAttentionPerActBCAgent(Agent):
                 nerf_target_camera_extrinsics.append(nerf_target_camera_extrinsic)
                 nerf_target_camera_intrinsics.append(nerf_target_camera_intrinsic)
 
-                nerf_next_target_rgbs.append(parse_img_file(nerf_next_multi_view_rgb_path[i], mask_gt_rgb=self._mask_gt_rgb))#, session=self._rembg_session))    # FIXME: file_path 'NoneType' object has no attribute 'read'
-                nerf_next_target_depths.append(parse_depth_file(nerf_next_multi_view_depth_path[i]))
-                nerf_next_target_camera_extrinsic, nerf_next_target_camera_intrinsic, nerf_next_target_focal = parse_camera_file(nerf_next_multi_view_camera_path[i])
-                nerf_next_target_camera_extrinsics.append(nerf_next_target_camera_extrinsic)
-                nerf_next_target_camera_intrinsics.append(nerf_next_target_camera_intrinsic)
-
             nerf_target_rgb = torch.from_numpy(np.stack(nerf_target_rgbs)).float().to(device) # [bs, H, W, 3], [0,1]
             nerf_target_depth = torch.from_numpy(np.stack(nerf_target_depths)).float().to(device) # [bs, H, W, 1], no normalization
             nerf_target_camera_extrinsic = torch.from_numpy(np.stack(nerf_target_camera_extrinsics)).float().to(device)
             nerf_target_camera_intrinsic = torch.from_numpy(np.stack(nerf_target_camera_intrinsics)).float().to(device)
 
-            nerf_next_target_rgb = torch.from_numpy(np.stack(nerf_next_target_rgbs)).float().to(device) # [bs, H, W, 3], [0,1]
-            nerf_next_target_depth = torch.from_numpy(np.stack(nerf_next_target_depths)).float().to(device) # [bs, H, W, 1], no normalization
-            nerf_next_target_camera_extrinsic = torch.from_numpy(np.stack(nerf_next_target_camera_extrinsics)).float().to(device)
-            nerf_next_target_camera_intrinsic = torch.from_numpy(np.stack(nerf_next_target_camera_intrinsics)).float().to(device)
+
+            # load img and camera (support bs>1)
+            nerf_next_target_rgbs_sequence, nerf_next_target_depths_sequence, nerf_next_target_camera_extrinsics_sequence, nerf_next_target_camera_intrinsics_sequence, nerf_next_pcd_sequence = [], [], [], [], []
+            timesteps = nerf_next_multi_view_camera_sequence_path.shape[1]
+            for time_step in range(timesteps):
+                if nerf_next_pcd_sequence[:,time_step] == None:
+                    break
+
+                next_view_dix = np.random.randint(0, num_view_by_user)
+                nerf_next_multi_view_rgb_path = nerf_next_multi_view_rgb_sequence_path[:,time_step, next_view_dix]
+                nerf_next_multi_view_depth_path = nerf_next_multi_view_depth_sequence_path[:,time_step, next_view_dix]
+                nerf_next_multi_view_camera_path = nerf_next_multi_view_camera_sequence_path[:,time_step, next_view_dix]
+                nerf_next_pcd = nerf_next_pcd_sequence[:,time_step]
+
+                nerf_next_target_rgbs, nerf_next_target_depths, nerf_next_target_camera_extrinsics, nerf_next_target_camera_intrinsics, nerf_next_pcd = [], [], [], []
+
+                for i in range(bs):
+                    nerf_next_target_rgbs.append(parse_img_file(nerf_next_multi_view_rgb_path[i], mask_gt_rgb=self._mask_gt_rgb))#, session=self._rembg_session))    # FIXME: file_path 'NoneType' object has no attribute 'read'
+                    nerf_next_target_depths.append(parse_depth_file(nerf_next_multi_view_depth_path[i]))
+                    nerf_next_target_camera_extrinsic, nerf_next_target_camera_intrinsic, nerf_next_target_focal = parse_camera_file(nerf_next_multi_view_camera_path[i])
+                    nerf_next_target_camera_extrinsics.append(nerf_next_target_camera_extrinsic)
+                    nerf_next_target_camera_intrinsics.append(nerf_next_target_camera_intrinsic)
+                    nerf_next_pcd.append(nerf_next_pcd[i])
+
+                nerf_next_target_rgbs_sequence.append(nerf_next_target_rgbs)
+                nerf_next_target_depths_sequence.append(nerf_next_target_depths)
+                nerf_next_target_camera_extrinsics_sequence.append(nerf_next_target_camera_extrinsics)
+                nerf_next_target_camera_intrinsics_sequence.append(nerf_next_target_camera_intrinsics)
+                nerf_next_pcd_sequence.append(nerf_next_pcd)
+
+
+            nerf_next_target_rgb_sequence = torch.from_numpy(np.stack(nerf_next_target_rgbs_sequence)).float().to(device).transpose(0,1) # [bs,timesteps, H, W, 3], [0,1]
+            nerf_next_target_depth_sequence = torch.from_numpy(np.stack(nerf_next_target_depths_sequence)).float().to(device).transpose(0,1) # [bs,timesteps, H, W, 1], no normalization
+            nerf_next_target_camera_extrinsic_sequence = torch.from_numpy(np.stack(nerf_next_target_camera_extrinsics_sequence)).float().to(device).transpose(0,1)
+            nerf_next_target_camera_intrinsic_sequence = torch.from_numpy(np.stack(nerf_next_target_camera_intrinsics_sequence)).float().to(device).transpose(0,1)
+            nerf_next_pcd_sequence = torch.from_numpy(np.stack(nerf_next_pcd_sequence)).float().to(device).transpose(0,1) # [bs, timesteps,16384, 3]
 
         bounds = self._coordinate_bounds.to(device)
         if self._layer > 0:
@@ -793,10 +813,11 @@ class QAttentionPerActBCAgent(Agent):
                                 nerf_target_pose=nerf_target_camera_extrinsic,
                                 nerf_target_camera_intrinsic=nerf_target_camera_intrinsic,
                                 lang_goal=lang_goal,
-                                nerf_next_target_rgb=nerf_next_target_rgb,
-                                nerf_next_target_depth=nerf_next_target_depth,
-                                nerf_next_target_pose=nerf_next_target_camera_extrinsic,
-                                nerf_next_target_camera_intrinsic=nerf_next_target_camera_intrinsic,
+                                nerf_next_target_rgb_sequence=nerf_next_target_rgb_sequence,
+                                nerf_next_target_depth_sequence=nerf_next_target_depth_sequence,
+                                nerf_next_target_pose_sequence=nerf_next_target_camera_extrinsic_sequence,
+                                nerf_next_target_camera_intrinsic_sequence=nerf_next_target_camera_intrinsic_sequence,
+                                nerf_next_pcd_sequence=nerf_next_pcd_sequence,
                                 step=step,
                                 action=action_gt,
                                 )

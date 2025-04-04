@@ -91,7 +91,7 @@ def create_replay(batch_size: int, timesteps: int,
     observation_elements.append(
         ObservationElement('nerf_next_multi_view_camera_sequence', (cfg.rlbench.max_timesteps_per_sequence,num_view_for_nerf,), np.object_))
     observation_elements.append(
-        ObservationElement('next_pcd_sequence', (cfg.rlbench.max_timesteps_per_sequence,), np.object_))
+        ObservationElement('nerf_next_pcd_sequence', (cfg.rlbench.max_timesteps_per_sequence,3, *image_size), np.object_))
 
     # discretized translation, discretized rotation, discrete ignore collision, 6-DoF gripper pose, and pre-trained language embeddings
     observation_elements.extend([
