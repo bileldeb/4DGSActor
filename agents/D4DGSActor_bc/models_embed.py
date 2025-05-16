@@ -216,8 +216,10 @@ class GeneralizableGSEmbedNet(nn.Module):
 
         SB, N, _ = data['xyz'].shape
         NS = self.num_views_per_obj # 1
+        
         xyz = data['xyz']                                        # [1,N,3]
         xyz = torch.cat((xyz, xyz+torch.randn_like(xyz)), dim=1) # [1,2N,3]
+
         rgb = data['img'].rearrange(pcd, 'b c h w -> b (h w) c') # [1,N,3]
         rgb = torch.cat((rgb, rgb+torch.randn_like(rgb)), dim=1) # [1,2N,3]
 

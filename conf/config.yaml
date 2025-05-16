@@ -7,7 +7,7 @@ ddp:
 rlbench:
     task_name: "multi"
     # change the task as you want. in our paper, we select these 10 tasks.
-    tasks: [close_jar,open_drawer,sweep_to_dustpan_of_size,meat_off_grill,turn_tap,slide_block_to_color_target,put_item_in_drawer,reach_and_drag,push_buttons,stack_blocks]
+    tasks: [close_jar] #,open_drawer,sweep_to_dustpan_of_size,meat_off_grill,turn_tap,slide_block_to_color_target,put_item_in_drawer,reach_and_drag,push_buttons,stack_blocks]
     # you could try more/fewer demos.
     demos: 20
     # you could try more/fewer views.

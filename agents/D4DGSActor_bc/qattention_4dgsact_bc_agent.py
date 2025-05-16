@@ -731,11 +731,10 @@ class QAttentionPerActBCAgent(Agent):
             # load img and camera (support bs>1)
             nerf_next_target_rgbs_sequence, nerf_next_target_depths_sequence, nerf_next_target_camera_extrinsics_sequence, nerf_next_target_camera_intrinsics_sequence, nerf_next_pcd_sequence = [], [], [], [], []
             timesteps = nerf_next_multi_view_camera_sequence_path.shape[1]
+            next_view_dix = np.random.randint(0, num_view_by_user)
             for time_step in range(timesteps):
                 if nerf_next_pcd_sequence[:,time_step] == None:
                     break
-
-                next_view_dix = np.random.randint(0, num_view_by_user)
                 nerf_next_multi_view_rgb_path = nerf_next_multi_view_rgb_sequence_path[:,time_step, next_view_dix]
                 nerf_next_multi_view_depth_path = nerf_next_multi_view_depth_sequence_path[:,time_step, next_view_dix]
                 nerf_next_multi_view_camera_path = nerf_next_multi_view_camera_sequence_path[:,time_step, next_view_dix]

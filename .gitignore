@@ -5,6 +5,7 @@ wandb/
 data
 !third_party/**/data
 third_party/generative_models
+third_party/vrb
 test/
 *.eps
 *.pyc
